@@ -73,7 +73,8 @@ def run_pipeline(
     Returns:
         PipelineResult with the report text, paths, stats, and any errors
     """
-    llm = dataiku.LLM(llm_connection_id)
+    project = dataiku.api_client().get_default_project()
+    llm = project.get_llm(llm_connection_id)
     folder = dataiku.Folder(folder_name)
 
     # ── Discover documents ────────────────────────────────────────────────────
