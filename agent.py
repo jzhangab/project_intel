@@ -8,8 +8,8 @@ import json
 import re
 from datetime import datetime
 
-from project_intel.document_parser import ParsedDocument
-from project_intel.memory import DocumentRecord, MemoryStore
+from .document_parser import ParsedDocument
+from .memory import DocumentRecord, MemoryStore
 
 # Chunk size in characters — large enough for context but safe for token limits
 CHUNK_SIZE = 60_000

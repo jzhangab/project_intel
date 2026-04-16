@@ -11,10 +11,10 @@ from dataclasses import dataclass
 import dataiku
 from tqdm import tqdm
 
-from project_intel.document_parser import parse_document
-from project_intel.memory import MemoryStore
-from project_intel.agent import analyze_document
-from project_intel.report_generator import extract_global_insights, generate_report
+from .document_parser import parse_document
+from .memory import MemoryStore
+from .agent import analyze_document
+from .report_generator import extract_global_insights, generate_report
 
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".pptx", ".ppt", ".xlsx", ".xls"}
 

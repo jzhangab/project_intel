@@ -6,7 +6,7 @@ to produce a comprehensive project intelligence report via the Dataiku LLM Mesh.
 import json
 import re
 
-from project_intel.memory import MemoryStore
+from .memory import MemoryStore
 
 SYNTHESIS_SYSTEM = """You are a principal technology consultant writing an executive-grade
 project intelligence report. You have access to summaries of all project documents and
