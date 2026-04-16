@@ -1,10 +1,13 @@
 """
 Document intelligence agent.
-Processes each document with Claude, extracting structured insights into memory.
-Handles large documents via chunking and streaming.
+Processes each document through the Dataiku LLM Mesh, extracting structured
+insights into memory. Handles large documents via chunking.
 """
 
-import anthropic
+import json
+import re
+from datetime import datetime
+
 from .document_parser import ParsedDocument
 from .memory import DocumentRecord, MemoryStore
 
@@ -44,14 +47,46 @@ def _chunk_content(content: str, chunk_size: int = CHUNK_SIZE) -> list[str]:
     return chunks
 
 
-def analyze_document(
-    client: anthropic.Anthropic,
-    doc: ParsedDocument,
-    memory: MemoryStore,
-) -> DocumentRecord:
+def _call_llm(llm, system: str, user: str, max_tokens: int = 4096) -> str:
+    """Execute a single LLM call via the Dataiku LLM Mesh and return the response text."""
+    completion = llm.new_completion()
+    completion.with_message(system, role="system")
+    completion.with_message(user, role="user")
+    completion.settings.max_tokens = max_tokens
+    resp = completion.execute()
+    if not resp.success:
+        raise RuntimeError(f"LLM call failed: {resp}")
+    return resp.text.strip()
+
+
+def _parse_json_response(raw: str) -> dict:
+    """Extract and parse a JSON object from an LLM response, handling markdown fences."""
+    # Strip markdown code block if present
+    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
+    if match:
+        raw = match.group(1)
+    try:
+        return json.loads(raw.strip())
+    except json.JSONDecodeError:
+        return {
+            "summary": raw[:500],
+            "key_topics": [],
+            "decisions": [],
+            "technologies": [],
+            "dates_mentioned": [],
+            "people_mentioned": [],
+        }
+
+
+def analyze_document(llm, doc: ParsedDocument, memory: MemoryStore) -> DocumentRecord:
     """
-    Send a document to Claude for structured analysis.
-    For large documents, processes in chunks and merges the results.
+    Send a document to the LLM for structured analysis via Dataiku LLM Mesh.
+    For large documents, processes in chunks then merges results.
+
+    Args:
+        llm: A Dataiku LLM handle obtained from dataiku.LLM("connection_id")
+        doc: Parsed document content
+        memory: The agent memory store to persist results into
     """
     chunks = _chunk_content(doc.content)
     chunk_summaries = []
@@ -80,26 +115,18 @@ Return a JSON object with exactly these fields:
 
 Return ONLY the JSON object, no other text."""
 
-        full_response = ""
-        with client.messages.stream(
-            model="claude-opus-4-7",
-            max_tokens=4096,
-            thinking={"type": "adaptive"},
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": prompt}],
-            cache_control={"type": "ephemeral"},
-        ) as stream:
-            for text in stream.text_stream:
-                full_response += text
+        raw = _call_llm(llm, SYSTEM_PROMPT, prompt, max_tokens=4096)
+        chunk_summaries.append(raw)
 
-        chunk_summaries.append(full_response.strip())
-
-    # If multiple chunks, merge them with a second pass
+    # If multiple chunks, do a merge pass
     if len(chunk_summaries) > 1:
+        parts_text = "\n\n".join(
+            f"Part {i+1}:\n{s}" for i, s in enumerate(chunk_summaries)
+        )
         merge_prompt = f"""You analyzed a large document ({doc.filename}) in {len(chunk_summaries)} parts.
 Here are the extracted insights from each part:
 
-{chr(10).join(f"Part {i+1}:{chr(10)}{s}" for i, s in enumerate(chunk_summaries))}
+{parts_text}
 
 Merge all parts into a single unified JSON object:
 {{
@@ -112,42 +139,11 @@ Merge all parts into a single unified JSON object:
 }}
 
 Return ONLY the JSON object."""
-
-        full_response = ""
-        with client.messages.stream(
-            model="claude-opus-4-7",
-            max_tokens=4096,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": merge_prompt}],
-        ) as stream:
-            for text in stream.text_stream:
-                full_response += text
-        final_json_str = full_response.strip()
+        final_raw = _call_llm(llm, SYSTEM_PROMPT, merge_prompt, max_tokens=4096)
     else:
-        final_json_str = chunk_summaries[0]
+        final_raw = chunk_summaries[0]
 
-    # Parse the JSON response
-    import json
-    import re
-    from datetime import datetime
-
-    # Extract JSON if wrapped in markdown code block
-    json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", final_json_str, re.DOTALL)
-    if json_match:
-        final_json_str = json_match.group(1)
-
-    try:
-        extracted = json.loads(final_json_str)
-    except json.JSONDecodeError:
-        # Fallback: use the raw response as the summary
-        extracted = {
-            "summary": final_json_str[:500],
-            "key_topics": [],
-            "decisions": [],
-            "technologies": [],
-            "dates_mentioned": [],
-            "people_mentioned": [],
-        }
+    extracted = _parse_json_response(final_raw)
 
     record = DocumentRecord(
         filename=doc.filename,

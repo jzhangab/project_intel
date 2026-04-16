@@ -1,9 +1,11 @@
 """
 Final synthesis pass: uses all document summaries stored in memory
-to produce a comprehensive project intelligence report.
+to produce a comprehensive project intelligence report via the Dataiku LLM Mesh.
 """
 
-import anthropic
+import json
+import re
+
 from .memory import MemoryStore
 
 SYNTHESIS_SYSTEM = """You are a principal technology consultant writing an executive-grade
@@ -25,14 +27,26 @@ Base your analysis strictly on evidence from the documents. Note where informati
 vs. explicitly stated."""
 
 
-def generate_report(
-    client: anthropic.Anthropic,
-    memory: MemoryStore,
-    project_name: str = "The Project",
-) -> str:
+def _call_llm(llm, system: str, user: str, max_tokens: int = 4096) -> str:
+    """Execute a single LLM call via the Dataiku LLM Mesh and return the response text."""
+    completion = llm.new_completion()
+    completion.with_message(system, role="system")
+    completion.with_message(user, role="user")
+    completion.settings.max_tokens = max_tokens
+    resp = completion.execute()
+    if not resp.success:
+        raise RuntimeError(f"LLM call failed: {resp}")
+    return resp.text.strip()
+
+
+def generate_report(llm, memory: MemoryStore, project_name: str = "The Project") -> str:
     """
     Generate the final comprehensive project intelligence report.
-    Uses cached document summaries to keep the context efficient.
+
+    Args:
+        llm: A Dataiku LLM handle obtained from dataiku.LLM("connection_id")
+        memory: The populated agent memory store
+        project_name: Human-readable project name for the report title
     """
     all_summaries = memory.get_all_summaries()
     stats = memory.get_stats()
@@ -85,36 +99,20 @@ Structure your report with these sections:
 Write a thorough, evidence-based report. This report will be used to onboard new team members
 and brief executives who have not read the underlying documents."""
 
-    print("Synthesizing final report...")
-    report_parts = []
-
-    with client.messages.stream(
-        model="claude-opus-4-7",
-        max_tokens=16000,
-        thinking={"type": "adaptive"},
-        system=[
-            {
-                "type": "text",
-                "text": SYNTHESIS_SYSTEM,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
-        messages=[{"role": "user", "content": prompt}],
-    ) as stream:
-        for text in stream.text_stream:
-            report_parts.append(text)
-            print(text, end="", flush=True)
-
-    print()  # newline after streaming
-    return "".join(report_parts)
+    print("Synthesizing final report (this may take a minute)...")
+    report = _call_llm(llm, SYNTHESIS_SYSTEM, prompt, max_tokens=8000)
+    print(f"Report generated: {len(report):,} characters")
+    return report
 
 
-def extract_global_insights(
-    client: anthropic.Anthropic,
-    memory: MemoryStore,
-) -> dict:
+def extract_global_insights(llm, memory: MemoryStore) -> dict:
     """
-    Extract structured global metadata (timeline, decisions, insights) to persist in memory.
+    Extract structured global metadata (timeline, decisions, cross-doc insights)
+    and persist them back into memory.
+
+    Args:
+        llm: A Dataiku LLM handle obtained from dataiku.LLM("connection_id")
+        memory: The populated agent memory store
     """
     all_summaries = memory.get_all_summaries()
 
@@ -135,24 +133,15 @@ Return JSON:
   "cross_document_insights": ["insight that only emerges from multiple documents"]
 }}"""
 
-    full_response = ""
-    with client.messages.stream(
-        model="claude-opus-4-7",
-        max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}],
-    ) as stream:
-        for text in stream.text_stream:
-            full_response += text
+    raw = _call_llm(llm, SYNTHESIS_SYSTEM, prompt, max_tokens=4096)
 
-    import json
-    import re
-
-    json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", full_response, re.DOTALL)
-    if json_match:
-        full_response = json_match.group(1)
+    # Strip markdown fences if present
+    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
+    if match:
+        raw = match.group(1)
 
     try:
-        data = json.loads(full_response.strip())
+        data = json.loads(raw.strip())
     except json.JSONDecodeError:
         data = {
             "global_themes": [],
