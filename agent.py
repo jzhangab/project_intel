@@ -52,7 +52,7 @@ def _call_llm(llm, system: str, user: str, max_tokens: int = 4096) -> str:
     completion = llm.new_completion()
     completion.with_message(system, role="system")
     completion.with_message(user, role="user")
-    completion.settings.max_tokens = max_tokens
+    completion.settings["max_tokens"] = max_tokens
     resp = completion.execute()
     if not resp.success:
         raise RuntimeError(f"LLM call failed: {resp}")
