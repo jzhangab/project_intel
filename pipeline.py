@@ -16,7 +16,7 @@ from .memory import MemoryStore
 from .agent import analyze_document
 from .report_generator import extract_global_insights, generate_report
 
-SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".pptx", ".ppt", ".xlsx", ".xls"}
+SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".pptx", ".ppt", ".xlsx", ".xls", ".csv"}
 
 
 @dataclass
@@ -47,7 +47,7 @@ class PipelineResult:
 
 def run_pipeline(
     llm_connection_id: str,
-    folder_name: str = "project_documents",
+    folder_name: str,
     project_name: str = "My Technology Project",
     memory_path: str = "agent_memory.json",
     report_output_path: str = "project_intel_report.md",

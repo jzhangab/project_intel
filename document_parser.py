@@ -28,6 +28,8 @@ def parse_document(filename: str, file_bytes: bytes) -> ParsedDocument:
         return _parse_powerpoint(filename, file_bytes)
     elif ext in (".xlsx", ".xls"):
         return _parse_excel(filename, file_bytes)
+    elif ext == ".csv":
+        return _parse_csv(filename, file_bytes)
     else:
         return ParsedDocument(
             filename=filename,
@@ -178,5 +180,31 @@ def _parse_excel(filename: str, file_bytes: bytes) -> ParsedDocument:
         filename=filename,
         file_type="xlsx",
         content="\n\n".join(text_parts),
+        metadata=metadata,
+    )
+
+
+def _parse_csv(filename: str, file_bytes: bytes) -> ParsedDocument:
+    import pandas as pd
+
+    try:
+        df = pd.read_csv(io.BytesIO(file_bytes), encoding="utf-8")
+    except UnicodeDecodeError:
+        df = pd.read_csv(io.BytesIO(file_bytes), encoding="latin-1")
+
+    df = df.dropna(how="all").dropna(axis=1, how="all")
+
+    metadata = {"rows": len(df), "columns": list(df.columns)}
+
+    rows_preview = min(len(df), 200)
+    note = f"[Showing first 200 of {len(df)} rows]\n" if len(df) > 200 else ""
+    table_str = df.head(rows_preview).to_string(index=False, max_colwidth=100)
+
+    content = f"[CSV: {filename}]\n{note}{table_str}"
+
+    return ParsedDocument(
+        filename=filename,
+        file_type="csv",
+        content=content,
         metadata=metadata,
     )
